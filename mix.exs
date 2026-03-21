@@ -63,8 +63,8 @@ defmodule ToonApp.MixProject do
       {:jason, "~> 1.2"},
       {:dns_cluster, "~> 0.2.0"},
       {:bandit, "~> 1.10"},
-      {:toon, path: "../toon_ex"},
-   #    {:toon, "~> 0.3"},
+      # {:toon, path: "../toon_ex"},
+      {:toon, git: "https://github.com/manhvu/toon_ex"},
       {:uniq, "~> 0.6"}
     ]
   end

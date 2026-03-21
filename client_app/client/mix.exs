@@ -8,7 +8,7 @@ defmodule Client.MixProject do
       elixir: "~> 1.19",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
-      consolidate_protocols: false,
+      consolidate_protocols: false
     ]
   end
 
@@ -24,7 +24,8 @@ defmodule Client.MixProject do
     [
       {:phoenix_client, "~> 0.11"},
       # {:toon, "~> 0.3"},
-      {:toon, path: "../../../toon_ex"},
+      # {:toon, path: "../../../toon_ex"},
+      {:toon, git: "https://github.com/manhvu/toon_ex"},
       {:jason, ">= 0.0.0"}
     ]
   end
