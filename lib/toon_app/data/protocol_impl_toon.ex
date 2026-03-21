@@ -15,7 +15,7 @@ defimpl Toon.Encoder, for: ToonApp.MessageHolder do
     %{
       "id" => message_holder.id,
       "datetime" => DateTime.to_string(message_holder.datetime),
-      "messages" =>Enum.map(message_holder.messages, fn message -> Toon.encode!(message, opts) end)
+      "messages" => message_holder.messages #Enum.map(message_holder.messages, fn message -> Toon.encode!(message, opts) end)
     }
   end
 end

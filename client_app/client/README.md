@@ -1,21 +1,11 @@
 # Client
 
-**TODO: Add description**
-
-## Installation
-
-If [available in Hex](https://hex.pm/docs/publish), the package can be installed
-by adding `client` to your list of dependencies in `mix.exs`:
-
 ```elixir
-def deps do
-  [
-    {:client, "~> 0.1.0"}
-  ]
-end
+Client.Worker.start_link()
+
+# for push data to server
+Client.Worker.push("push_data", [1, 3, %{a: 1}])
+
+# get data from server
+Client.Worker.get_data()
 ```
-
-Documentation can be generated with [ExDoc](https://github.com/elixir-lang/ex_doc)
-and published on [HexDocs](https://hexdocs.pm). Once published, the docs can
-be found at <https://hexdocs.pm/client>.
-

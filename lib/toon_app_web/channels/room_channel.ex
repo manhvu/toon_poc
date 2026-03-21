@@ -1,6 +1,10 @@
 defmodule ToonAppWeb.RoomChannel do
   use ToonAppWeb, :channel
 
+  alias ToonApp.GenData
+
+  require Logger
+
   @impl true
   def join("room:lobby", payload, socket) do
     if authorized?(payload) do
@@ -26,8 +30,13 @@ defmodule ToonAppWeb.RoomChannel do
   end
 
   def handle_in("get_data", payload, socket) do
+    msg = GenData.gen(10)
+    {:reply, {:ok, msg}, socket}
+  end
 
-    {:reply, {:ok, payload}, socket}
+  def handle_in("push_data", payload, socket) do
+    Logger.debug("received: #{inspect payload}")
+    {:reply, {:ok, "received"}, socket}
   end
 
 

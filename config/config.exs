@@ -57,7 +57,7 @@ config :logger, :default_formatter,
   metadata: [:request_id]
 
 # Use Jason for JSON parsing in Phoenix
- config :phoenix, :json_library, Toon
+ config :phoenix, :json_library, ToonApp.MyToon
 # config :phoenix, :json_library, Jason
 
 # Import environment specific config. This must remain at the bottom
