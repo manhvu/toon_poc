@@ -14,7 +14,7 @@ defmodule Client.Worker do
 
       config :client,
         default_config: [
-          uri: "ws://localhost:4000/socket/websocket?vsn=2.0.0",
+          url: "ws://localhost:4000/socket/websocket?vsn=2.0.0",
           json_parser: Client.MyToon
         ]
 
@@ -75,7 +75,6 @@ defmodule Client.Worker do
 
   def get_data(), do: push("get_data")
 
-
   @doc """
   Leaves the current channel and joins `topic`.
 
@@ -128,10 +127,10 @@ defmodule Client.Worker do
 
   @impl true
   def init(opts) do
-    config  = opts_or_app_config(opts)
-    topic   = Keyword.get(config, :topic, @default_topic)
+    config = opts_or_app_config(opts)
+    topic = Keyword.get(config, :topic, @default_topic)
 
-    Logger.info("Worker: config: #{inspect config}, topic: #{inspect topic}")
+    Logger.info("Worker: config: #{inspect(config)}, topic: #{inspect(topic)}")
 
     {:ok, socket} = Socket.start_link(config)
     # Give the socket time to complete the WebSocket handshake.
@@ -152,7 +151,7 @@ defmodule Client.Worker do
   def handle_call({:push, event, payload}, _from, %{channel: channel} = state) do
     result =
       case Channel.push(channel, event, payload) do
-        {:ok, reply}    -> {:ok, reply}
+        {:ok, reply} -> {:ok, reply}
         {:error, _} = e -> e
       end
 
@@ -182,8 +181,9 @@ defmodule Client.Worker do
   def handle_call(:status, _from, %{socket: socket} = state) do
     info = %{
       connected?: Socket.connected?(socket),
-      topic:      state.topic
+      topic: state.topic
     }
+
     {:reply, info, state}
   end
 
@@ -195,9 +195,10 @@ defmodule Client.Worker do
 
   def handle_cast({:push_with_callback, event, payload, cb}, %{channel: channel} = state) do
     case Channel.push(channel, event, payload) do
-      {:ok, reply}    -> cb.({:ok, reply})
+      {:ok, reply} -> cb.({:ok, reply})
       {:error, _} = e -> cb.(e)
     end
+
     {:noreply, state}
   end
 
@@ -236,9 +237,10 @@ defmodule Client.Worker do
     do: %{socket: socket, channel: channel, topic: topic}
 
   defp leave_channel(nil), do: :ok
+
   defp leave_channel(channel) do
     case Channel.leave(channel) do
-      :ok             -> :ok
+      :ok -> :ok
       {:error, _} = e -> e
     end
   end
