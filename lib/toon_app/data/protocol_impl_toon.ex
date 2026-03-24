@@ -1,5 +1,5 @@
 
-defimpl Toon.Encoder, for: ToonApp.Message do
+defimpl ToonEx.Encoder, for: ToonApp.Message do
   def encode(message, opts) do
     %{
       "id" => message.id,
@@ -10,7 +10,7 @@ defimpl Toon.Encoder, for: ToonApp.Message do
   end
 end
 
-defimpl Toon.Encoder, for: ToonApp.MessageHolder do
+defimpl ToonEx.Encoder, for: ToonApp.MessageHolder do
   def encode(message_holder, opts) do
     %{
       "id" => message_holder.id,

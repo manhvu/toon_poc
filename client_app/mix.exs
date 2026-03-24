@@ -23,9 +23,7 @@ defmodule Client.MixProject do
   defp deps do
     [
       {:phoenix_client, "~> 0.11"},
-      # {:toon, "~> 0.3"},
-      # {:toon, path: "../../../toon_ex"},
-      {:toon, git: "https://github.com/manhvu/toon_ex"},
+      {:toon_ex, "~> 0.1"},
       {:jason, ">= 0.0.0"}
     ]
   end

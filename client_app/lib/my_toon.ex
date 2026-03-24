@@ -19,7 +19,7 @@ defmodule Client.MyToon do
   @doc "Encodes `data` with `Toon`. Returns `{:ok, binary}` or `{:error, reason}`."
   @spec encode(term(), keyword()) :: encode_result()
   def encode(data, _opts \\ []) do
-    result = Toon.encode(data)
+    result = ToonEx.encode(data)
     Logger.debug("MyToon.encode result: #{inspect(result)}")
     result
   end
@@ -27,7 +27,7 @@ defmodule Client.MyToon do
   @doc "Like `encode/2` but raises on failure."
   @spec encode!(term(), keyword()) :: binary()
   def encode!(data, _opts \\ []) do
-    result = Toon.encode!(data)
+    result = ToonEx.encode!(data)
     Logger.debug("MyToon.encode! result: #{inspect(result)}")
     result
   end
@@ -35,7 +35,7 @@ defmodule Client.MyToon do
   @doc "Decodes `data` with `Toon`. Returns `{:ok, term}` or `{:error, reason}`."
   @spec decode(binary(), keyword()) :: decode_result()
   def decode(data, _opts \\ []) do
-    result = Toon.decode(data)
+    result = ToonEx.decode(data)
     Logger.debug("MyToon.decode result: #{inspect(result)}")
     result
   end
@@ -43,7 +43,7 @@ defmodule Client.MyToon do
   @doc "Like `decode/2` but raises on failure."
   @spec decode!(binary(), keyword()) :: term()
   def decode!(data, _opts \\ []) do
-    result = Toon.decode!(data)
+    result = ToonEx.decode!(data)
     Logger.debug("MyToon.decode! result: #{inspect(result)}")
     result
   end

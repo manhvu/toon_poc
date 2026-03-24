@@ -11,5 +11,5 @@ Ready to run in production? Please [check our deployment guides](https://hexdocs
 
 ## Run test
 
-After run server go to `client_app/client` to connect to server.
+After run server go to `client_app/` to connect to server.
 Check readme on client app for running client.
