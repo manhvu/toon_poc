@@ -1,5 +1,5 @@
 # The directory Mix will write compiled artifacts to.
-/_build/
+_build/
 
 # If you run "mix test --cover", coverage assets end up here.
 /cover/
@@ -35,3 +35,4 @@ toon_app-*.tar
 npm-debug.log
 /assets/node_modules/
 .expert
+.DS_Store

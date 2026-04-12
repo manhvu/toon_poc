@@ -23,7 +23,7 @@ defmodule Client.MixProject do
   defp deps do
     [
       {:phoenix_client, "~> 0.11"},
-      {:toon_ex, "~> 0.1"},
+      {:toon_ex, "~> 0.8"},
       {:jason, ">= 0.0.0"}
     ]
   end

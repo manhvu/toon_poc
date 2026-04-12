@@ -1,0 +1,599 @@
+defmodule ToonEx.Encode.Arrays do
+  @moduledoc """
+  Encoding of TOON arrays in three formats:
+  - Inline: for primitive arrays (e.g., tags[2]: reading,gaming)
+  - Tabular: for uniform object arrays (e.g., users[2]{name,age}: Alice,30 / Bob,25)
+  - List: for mixed or non-uniform arrays
+  """
+
+  alias ToonEx.Constants
+  alias ToonEx.Encode.{Primitives, Strings, Objects}
+  alias ToonEx.Utils
+
+  # Performance: Inline hot functions to reduce function call overhead
+  @compile {:inline,
+            do_is_primitive?: 1,
+            do_all_values_primitive?: 1,
+            format_length_marker: 2,
+            apply_marker: 3,
+            build_primitive_line: 3,
+            encode_empty_array_item: 1,
+            encode_primitive_item: 2,
+            format_delimiter_marker: 1,
+            get_ordered_map_keys: 2}
+
+  @doc """
+  Encodes an array with the given key.
+
+  Automatically detects the appropriate format based on array contents.
+  """
+  @spec encode(String.t(), list(), non_neg_integer(), map()) :: [iodata()]
+  def encode(key, list, depth, opts) when is_list(list) do
+    # Single-pass array type detection - replaces 6 separate traversals
+    case do_detect_array_type(list, {true, true, true, nil, 0, false}) do
+      {:primitive, length} ->
+        if length == 0 do
+          encode_empty(key, opts.length_marker)
+        else
+          encode_inline(key, list, opts)
+        end
+
+      {:tabular, _length, keys} ->
+        encode_tabular_with_keys(key, list, keys, depth, opts)
+
+      {:list, _length} ->
+        encode_list(key, list, depth, opts)
+    end
+  end
+
+  # Single-pass array type detection
+  # State: {all_primitives, all_maps, all_primitive_values, keys, count, count_only}
+  # When count_only is true, we just count remaining elements without type checking
+  defp do_detect_array_type([], {false, true, true, keys, count, _count_only})
+       when is_list(keys) and keys != [],
+       do: {:tabular, count, keys}
+
+  defp do_detect_array_type([], {true, _, _, _, count, _count_only}),
+    do: {:primitive, count}
+
+  defp do_detect_array_type([], {_, _, _, _, count, _count_only}),
+    do: {:list, count}
+
+  # Count-only mode: just count remaining elements (merged from do_count_remaining)
+  defp do_detect_array_type([_ | t], {_, _, _, _, count, true}) do
+    do_detect_array_type(t, {false, false, false, nil, count + 1, true})
+  end
+
+  defp do_detect_array_type([h | t], {all_prim, all_maps, all_prim_vals, keys, count, false}) do
+    new_count = count + 1
+
+    cond do
+      # Early exit: already determined as list - switch to count-only mode
+      (not all_prim and not all_maps) or (all_maps and not all_prim_vals) ->
+        do_detect_array_type(t, {false, false, false, nil, new_count, true})
+
+      # Primitive element - makes it not all-maps
+      is_nil(h) or is_boolean(h) or is_number(h) or is_binary(h) ->
+        do_detect_array_type(t, {all_prim, false, all_prim_vals, nil, new_count, false})
+
+      # Map element
+      is_map(h) ->
+        h_keys = Map.keys(h) |> Enum.sort()
+        h_all_prim = do_all_values_primitive?(h)
+
+        new_keys =
+          if keys do
+            if h_keys == keys, do: keys, else: nil
+          else
+            h_keys
+          end
+
+        if not h_all_prim do
+          do_detect_array_type(t, {false, false, false, nil, new_count, true})
+        else
+          do_detect_array_type(
+            t,
+            {false, all_maps, all_prim_vals and h_all_prim, new_keys, new_count, false}
+          )
+        end
+
+      # Other element -> list
+      true ->
+        do_detect_array_type(t, {false, false, false, nil, new_count, true})
+    end
+  end
+
+  defp do_all_values_primitive?(map) do
+    :maps.fold(fn _k, v, acc -> acc and do_is_primitive?(v) end, true, map)
+  end
+
+  defp do_is_primitive?(v) when is_nil(v) or is_boolean(v) or is_number(v) or is_binary(v),
+    do: true
+
+  defp do_is_primitive?(_), do: false
+
+  # Encode tabular array with pre-computed keys from single-pass detection
+  defp encode_tabular_with_keys(key, list, keys, _depth, opts) do
+    length_marker = format_length_marker(length(list), opts.length_marker)
+    encoded_key = Strings.encode_key(key)
+
+    # Apply key_order if provided
+    final_keys =
+      case Map.get(opts, :key_order) do
+        key_order when is_list(key_order) and key_order != [] ->
+          ordered = Enum.filter(key_order, &(&1 in keys))
+          if length(ordered) == length(keys), do: ordered, else: keys
+
+        _ ->
+          keys
+      end
+
+    fields = final_keys |> Enum.map(&Strings.encode_key/1) |> Enum.intersperse(opts.delimiter)
+    delimiter_marker = format_delimiter_marker(opts.delimiter)
+
+    header = [
+      encoded_key,
+      "[",
+      length_marker,
+      delimiter_marker,
+      "]",
+      Constants.open_brace(),
+      fields,
+      Constants.close_brace(),
+      Constants.colon()
+    ]
+
+    rows =
+      Enum.map(list, fn obj ->
+        final_keys
+        |> Enum.map(fn k -> Primitives.encode(Map.get(obj, k), opts.delimiter) end)
+        |> Enum.intersperse(opts.delimiter)
+      end)
+
+    [header | rows]
+  end
+
+  @doc """
+  Encodes an empty array.
+
+  ## Examples
+
+      iex> result = ToonEx.Encode.Arrays.encode_empty("items", nil)
+      iex> IO.iodata_to_binary(result)
+      "items[0]:"
+  """
+  @spec encode_empty(String.t(), String.t() | nil) ::
+          nonempty_list(nonempty_list(binary() | nonempty_list(binary())))
+  def encode_empty(key, length_marker \\ nil) do
+    marker = format_length_marker(0, length_marker)
+    [[Strings.encode_key(key), "[", marker, "]", Constants.colon()]]
+  end
+
+  @doc """
+  Encodes a primitive array in inline format.
+
+  ## Examples
+
+      iex> opts = %{delimiter: ",", length_marker: nil}
+      iex> result = ToonEx.Encode.Arrays.encode_inline("tags", ["reading", "gaming"], opts)
+      iex> IO.iodata_to_binary(result)
+      "tags[2]: reading,gaming"
+  """
+  @spec encode_inline(String.t(), list(), map()) :: [iodata()]
+  def encode_inline(key, list, opts) do
+    length_marker = format_length_marker(length(list), opts.length_marker)
+    encoded_key = Strings.encode_key(key)
+
+    values =
+      list
+      |> Enum.map(&Primitives.encode(&1, opts.delimiter))
+      |> Enum.intersperse(opts.delimiter)
+
+    # Include delimiter marker in header per TOON spec Section 6
+    delimiter_marker = format_delimiter_marker(opts.delimiter)
+
+    header = [
+      encoded_key,
+      "[",
+      length_marker,
+      delimiter_marker,
+      "]",
+      Constants.colon(),
+      Constants.space()
+    ]
+
+    [[header, values]]
+  end
+
+  @doc """
+  Encodes a uniform object array in tabular format.
+
+  Returns a list where the first element is the header, and subsequent elements
+  are data rows (without indentation - indentation is added by the Writer).
+
+  ## Examples
+
+      iex> opts = %{delimiter: ",", length_marker: nil, indent_string: "  "}
+      iex> users = [%{"name" => "Alice", "age" => 30}, %{"name" => "Bob", "age" => 25}]
+      iex> [header | rows] = ToonEx.Encode.Arrays.encode_tabular("users", users, 0, opts)
+      iex> IO.iodata_to_binary(header)
+      "users[2]{age,name}:"
+      iex> Enum.map(rows, &IO.iodata_to_binary/1)
+      ["30,Alice", "25,Bob"]
+  """
+  @spec encode_tabular(String.t(), list(), non_neg_integer(), map()) :: [iodata()]
+  def encode_tabular(key, list, _depth, opts) do
+    # Extract keys from first map (already known to be tabular from caller)
+    keys =
+      case list do
+        [first | _] ->
+          map_keys = Map.keys(first)
+          key_order = Map.get(opts, :key_order)
+
+          if is_list(key_order) and not Enum.empty?(key_order) do
+            ordered = Enum.filter(key_order, &(&1 in map_keys))
+            if length(ordered) == length(map_keys), do: ordered, else: Enum.sort(map_keys)
+          else
+            Enum.sort(map_keys)
+          end
+
+        [] ->
+          []
+      end
+
+    encode_tabular_with_keys(key, list, keys, 0, opts)
+  end
+
+  @doc """
+  Encodes an array in list format (for mixed or non-uniform arrays).
+
+  Returns a list where the first element is the header, and subsequent elements
+  are list items (without base indentation - indentation is added by the Writer).
+
+  ## Examples
+
+      iex> opts = %{delimiter: ",", length_marker: nil, indent_string: "  "}
+      iex> items = [%{"title" => "Book", "price" => 9}, %{"title" => "Movie", "duration" => 120}]
+      iex> [header | list_items] = ToonEx.Encode.Arrays.encode_list("items", items, 0, opts)
+      iex> IO.iodata_to_binary(header)
+      "items[2]:"
+      iex> Enum.map(list_items, &IO.iodata_to_binary/1)
+      ["- price: 9", "  title: Book", "- duration: 120", "  title: Movie"]
+  """
+  @spec encode_list(String.t(), list(), non_neg_integer(), map()) :: [iodata()]
+  def encode_list(key, list, depth, opts) do
+    length_marker = format_length_marker(length(list), opts.length_marker)
+    encoded_key = Strings.encode_key(key)
+    delimiter_marker = format_delimiter_marker(opts.delimiter)
+
+    header = [encoded_key, "[", length_marker, delimiter_marker, "]", Constants.colon()]
+
+    # Performance: Tail-recursive accumulation instead of Enum.flat_map
+    items = do_encode_list_items(list, depth, opts, [])
+    [header | items]
+  end
+
+  # Tail-recursive helper for encoding list items
+  defp do_encode_list_items([], _depth, _opts, acc), do: :lists.reverse(acc)
+
+  defp do_encode_list_items([item | rest], depth, opts, acc) do
+    encoded = encode_list_item(item, depth, opts)
+    do_encode_list_items(rest, depth, opts, do_prepend_reversed(encoded, acc))
+  end
+
+  # Prepend items from a list in reverse order to accumulator (avoids intermediate list)
+  defp do_prepend_reversed([], acc), do: acc
+  defp do_prepend_reversed([h | t], acc), do: do_prepend_reversed(t, [h | acc])
+
+  # Private helpers
+
+  defp format_length_marker(length, nil), do: Integer.to_string(length)
+  defp format_length_marker(length, marker), do: marker <> Integer.to_string(length)
+
+  @compile {:inline, format_delimiter_marker: 1}
+  defp format_delimiter_marker(","), do: ""
+  defp format_delimiter_marker(delimiter), do: delimiter
+
+  # Pattern match on empty map first
+  defp encode_list_item(item, _depth, _opts) when item == %{} do
+    # Empty object encodes as bare hyphen
+    [[Constants.list_item_marker()]]
+  end
+
+  # Map items in list
+  defp encode_list_item(item, depth, opts) when is_map(item) do
+    keys = get_ordered_map_keys(item, Map.get(opts, :key_order))
+
+    keys
+    |> Enum.with_index()
+    |> Enum.flat_map(fn {k, index} ->
+      v = Map.get(item, k)
+      encode_map_entry_with_marker(k, v, index, depth, opts)
+    end)
+  end
+
+  # Array items in list - delegate to specific handlers
+  defp encode_list_item(item, _depth, opts) when is_list(item) and item == [] do
+    encode_empty_array_item(opts)
+  end
+
+  defp encode_list_item(item, _depth, opts) when is_list(item) do
+    if Utils.all_primitives?(item) do
+      encode_inline_array_item(item, opts)
+    else
+      encode_complex_array_item(item, opts)
+    end
+  end
+
+  # Primitive items in list
+  defp encode_list_item(item, _depth, opts) do
+    encode_primitive_item(item, opts)
+  end
+
+  # Extract helpers for array item types
+  defp encode_empty_array_item(opts) do
+    length_marker = format_length_marker(0, opts.length_marker)
+    [[Constants.list_item_marker(), Constants.space(), "[", length_marker, "]:"]]
+  end
+
+  defp encode_inline_array_item(item, opts) do
+    length_marker = format_length_marker(length(item), opts.length_marker)
+    delimiter_marker = format_delimiter_marker(opts.delimiter)
+
+    values =
+      item
+      |> Enum.map(&Primitives.encode(&1, opts.delimiter))
+      |> Enum.intersperse(opts.delimiter)
+
+    [
+      [
+        Constants.list_item_marker(),
+        Constants.space(),
+        "[",
+        length_marker,
+        delimiter_marker,
+        "]",
+        Constants.colon(),
+        Constants.space(),
+        values
+      ]
+    ]
+  end
+
+  defp encode_complex_array_item(item, opts) do
+    length_marker = format_length_marker(length(item), opts.length_marker)
+    delimiter_marker = format_delimiter_marker(opts.delimiter)
+
+    header = [
+      Constants.list_item_marker(),
+      Constants.space(),
+      "[",
+      length_marker,
+      delimiter_marker,
+      "]",
+      Constants.colon()
+    ]
+
+    # Performance: Tail-recursive accumulation instead of Enum.flat_map + Enum.map
+    nested_items = do_encode_complex_nested(item, opts, [])
+    [header | :lists.reverse(nested_items)]
+  end
+
+  # Tail-recursive helper for encoding complex nested array items
+  defp do_encode_complex_nested([], _opts, acc), do: acc
+
+  defp do_encode_complex_nested([nested_item | rest], opts, acc) do
+    nested = encode_list_item(nested_item, 0, opts)
+    indented = do_prepend_indented(nested, opts.indent_string, acc)
+    do_encode_complex_nested(rest, opts, indented)
+  end
+
+  # Prepend items with indent in reverse order to accumulator
+  defp do_prepend_indented([], _indent, acc), do: acc
+
+  defp do_prepend_indented([line | rest], indent, acc),
+    do: do_prepend_indented(rest, indent, [[indent | line] | acc])
+
+  defp encode_primitive_item(item, opts) do
+    [
+      [
+        Constants.list_item_marker(),
+        Constants.space(),
+        Primitives.encode(item, opts.delimiter)
+      ]
+    ]
+  end
+
+  # Helper to get ordered keys for map items
+  # Performance: Use MapSet for O(1) membership checks instead of O(n) list `in` checks
+  defp get_ordered_map_keys(item, key_order) do
+    map_keys = Map.keys(item)
+
+    case key_order do
+      [] ->
+        Enum.sort(map_keys)
+
+      key_order when is_list(key_order) ->
+        key_set = MapSet.new(map_keys)
+        # Single pass through key_order with O(1) lookups
+        ordered = Enum.filter(key_order, &MapSet.member?(key_set, &1))
+        # Single pass through map_keys with O(1) lookups
+        order_set = MapSet.new(key_order)
+        extra = map_keys |> Enum.reject(&MapSet.member?(order_set, &1)) |> Enum.sort()
+        ordered ++ extra
+
+      _ ->
+        Enum.sort(map_keys)
+    end
+  end
+
+  # Helper for encoding map entries with list markers
+  defp encode_map_entry_with_marker(k, v, index, depth, opts) do
+    encoded_key = Strings.encode_key(k)
+    needs_marker = index == 0
+
+    encode_value_with_optional_marker(encoded_key, v, needs_marker, depth, opts)
+  end
+
+  # Encode primitive values
+  defp encode_value_with_optional_marker(key, v, needs_marker, _depth, opts)
+       when is_nil(v) or is_boolean(v) or is_number(v) or is_binary(v) do
+    line = build_primitive_line(key, v, opts)
+    [apply_marker(line, needs_marker, opts)]
+  end
+
+  # Encode empty array
+  defp encode_value_with_optional_marker(key, [], needs_marker, _depth, opts) do
+    line = build_empty_array_line(key, opts)
+    [apply_marker(line, needs_marker, opts)]
+  end
+
+  # Encode inline primitive array
+  defp encode_value_with_optional_marker(key, v, needs_marker, _depth, opts)
+       when is_list(v) do
+    if Utils.all_primitives?(v) do
+      line = build_inline_array_line(key, v, opts)
+      [apply_marker(line, needs_marker, opts)]
+    else
+      encode_complex_array_value(key, v, needs_marker, opts)
+    end
+  end
+
+  # Encode map values
+  defp encode_value_with_optional_marker(key, v, needs_marker, depth, opts) when is_map(v) do
+    header_line = [key, Constants.colon()]
+    nested_result = encode_nested_map(v, depth, opts)
+
+    if needs_marker do
+      [[Constants.list_item_marker(), Constants.space(), header_line] | nested_result]
+    else
+      [[opts.indent_string, header_line] | nested_result]
+    end
+  end
+
+  # Fallback for unsupported types
+  defp encode_value_with_optional_marker(key, _v, needs_marker, _depth, opts) do
+    line = [key, Constants.colon(), Constants.space(), Constants.null_literal()]
+    [apply_marker(line, needs_marker, opts)]
+  end
+
+  # Helpers for building lines
+  defp build_primitive_line(key, value, opts) do
+    [key, Constants.colon(), Constants.space(), Primitives.encode(value, opts.delimiter)]
+  end
+
+  defp build_empty_array_line(key, opts) do
+    length_marker = format_length_marker(0, opts.length_marker)
+    [Strings.encode_key(key), "[", length_marker, "]", Constants.colon()]
+  end
+
+  defp build_inline_array_line(key, values, opts) do
+    length_marker = format_length_marker(length(values), opts.length_marker)
+    delimiter_marker = format_delimiter_marker(opts.delimiter)
+
+    encoded_values =
+      values
+      |> Enum.map(&Primitives.encode(&1, opts.delimiter))
+      |> Enum.intersperse(opts.delimiter)
+
+    [
+      Strings.encode_key(key),
+      "[",
+      length_marker,
+      delimiter_marker,
+      "]",
+      Constants.colon(),
+      Constants.space(),
+      encoded_values
+    ]
+  end
+
+  # Apply list marker or indent based on needs_marker flag
+  defp apply_marker(line, true, _opts) do
+    [Constants.list_item_marker(), Constants.space() | line]
+  end
+
+  defp apply_marker(line, false, opts) do
+    [opts.indent_string | line]
+  end
+
+  # Handle complex arrays (tabular, list, or nested)
+  # Performance: Use single-pass detection instead of re-traversing with tabular_array?/list_array?
+  defp encode_complex_array_value(key, v, needs_marker, opts) do
+    depth = 0
+
+    case do_detect_array_type(v, {false, true, true, nil, 0, false}) do
+      {:tabular, _length, keys} ->
+        encode_tabular_array_value_with_keys(key, v, keys, needs_marker, depth, opts)
+
+      {:list, _length} ->
+        encode_list_array_value(key, v, needs_marker, depth, opts)
+
+      {:primitive, _length} ->
+        # Shouldn't happen for complex arrays, but handle gracefully
+        encode_other_array_value(key, v, needs_marker, depth, opts)
+    end
+  end
+
+  # Encode tabular array value with pre-computed keys (avoids re-detection)
+  defp encode_tabular_array_value_with_keys(key, v, keys, needs_marker, _depth, opts) do
+    length_marker = format_length_marker(length(v), opts.length_marker)
+    encoded_key = Strings.encode_key(key)
+    delimiter_marker = format_delimiter_marker(opts.delimiter)
+
+    fields = keys |> Enum.map(&Strings.encode_key/1) |> Enum.intersperse(opts.delimiter)
+
+    header = [
+      encoded_key,
+      "[",
+      length_marker,
+      delimiter_marker,
+      "]",
+      Constants.open_brace(),
+      fields,
+      Constants.close_brace(),
+      Constants.colon()
+    ]
+
+    rows =
+      Enum.map(v, fn obj ->
+        keys
+        |> Enum.map(fn k -> Primitives.encode(Map.get(obj, k), opts.delimiter) end)
+        |> Enum.intersperse(opts.delimiter)
+      end)
+
+    header_line = apply_marker(header, needs_marker, opts)
+    data_lines = Enum.map(rows, fn row -> [opts.indent_string, opts.indent_string, row] end)
+    [header_line | data_lines]
+  end
+
+  defp encode_list_array_value(key, v, needs_marker, depth, opts) do
+    [header | list_items] = encode(key, v, depth + 1, opts)
+    header_line = apply_marker(header, needs_marker, opts)
+
+    item_lines =
+      Enum.map(list_items, fn line -> [opts.indent_string, opts.indent_string, line] end)
+
+    [header_line | item_lines]
+  end
+
+  defp encode_other_array_value(key, v, needs_marker, depth, opts) do
+    nested = encode(key, v, depth + 1, opts)
+
+    if needs_marker do
+      [first_line | rest] = nested
+
+      [
+        [Constants.list_item_marker(), Constants.space(), first_line]
+        | Enum.map(rest, fn line -> [opts.indent_string, line] end)
+      ]
+    else
+      Enum.map(nested, fn line -> [opts.indent_string, line] end)
+    end
+  end
+
+  defp encode_nested_map(v, depth, opts) do
+    Objects.encode_to_lines(v, depth + 1, opts)
+    |> Enum.map(&[opts.indent_string, &1])
+  end
+end

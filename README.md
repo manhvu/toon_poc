@@ -1,15 +1,11 @@
-# ToonApp
+# ToonApp Server/Client Demo
 
-To start your Phoenix server:
+This is demo repo for [ToonEx](https://hex.pm/packages/toon_ex) library.
 
-* Run `mix setup` to install and setup dependencies
-* Start Phoenix endpoint with `mix phx.server` or inside IEx with `iex -S mix phx.server`
+## Guide
 
-Now you can visit [`localhost:4000`](http://localhost:4000) from your browser.
+Repo has two part:
+1. Server run Phoenix Channels (uses ToonEx), server in `server_app` folder
+2. Client run websocket (uses ToonEx) to connect to server, client in `client_app` folder
 
-Ready to run in production? Please [check our deployment guides](https://hexdocs.pm/phoenix/deployment.html).
-
-## Run test
-
-After run server go to `client_app/` to connect to server.
-Check readme on client app for running client.
+Follow guides in each sub folders for running.
